@@ -1,17 +1,15 @@
-# MODIS-Time-Series-Signal-Correction
 # -*- coding: utf-8 -*-
 """
 Created on Thu Dec 03 14:49:48 2015
 
 @author: LPalao
 script for drought assessment and monitoring
-Use linear interpolation to correct for cloud pixels
 """
 import gdal, gdalnumeric, osr
 from gdalconst import *
-from PyQt4.QtGui import QInputDialog
 import numpy as np
 import os, glob, itertools, time, gc
+#import pandas as pd
 
 start = time.ctime()
 
@@ -21,7 +19,8 @@ def array_stack(ndvi,qflag,xrows1,xrows2,yrows1,yrows2): #this should be list
     index=np.arange(0,len(ndvi))
     arrstack=np.empty(shape=(46,abs(xrows2-xrows1),abs(yrows2-yrows1))) #dtype=float
     for nv,q,x in itertools.izip(ndvi,qflag,index):     
-        arrndvi=gdalnumeric.LoadFile(nv)[xrows1:xrows2,yrows1:yrows2]  
+        arrndvi=gdalnumeric.LoadFile(nv)[xrows1:xrows2,yrows1:yrows2]
+        #print "%s, x1=%s, x2=%s, y1=%s, y2=%s" %(nv,xrows1,xrows2,yrows1,yrows2)  
         arrqflag=gdalnumeric.LoadFile(q)[xrows1:xrows2,yrows1:yrows2] 
         mask_clouds=np.where(arrqflag==3,np.nan,arrndvi)
         arrstack[x,:,:]=mask_clouds
@@ -81,10 +80,32 @@ def arrMerge(directory):
     
     gc.collect()
 
+
+def rvai(array):
+    Median=np.median(array,axis=0)
+    MAD=np.median(abs(array-Median),axis=0)
+    #MAD=np.median(AMD)
+    #Anomaly=(Array-Median)/(1.4826 * MAD)
+    return Median,MAD
+    
+def rvaimw(array):
+    AnomFreq=[]
+    reclass=(np.logical_and(array<=-1.29,array>=-10.0))*1
+    start=0
+    counter=4
+    scale=[1000,100,10,1]    
+    
+    for j in range(start,counter):
+        mw=reclass[start,counter]
+        for d,s in itertools.izip(mw,scale):
+            arrScale=np.sum(d*s)
+            AnomFreq.extend(arrScale)
+        start += 4
+        counter += 4
+
 ###################
 
-#directory=os.path.abspath("J:\Test\Extract_SubD")
-directory=QInputDialog.getText(None,"Folder of TIFF Files", "Please specify folder path")[0]
+directory=os.path.abspath("J:\Test\Extract_SubD")
 os.chdir(directory)
 
 fndvi=glob.glob("*NDVI.tif")
@@ -96,11 +117,13 @@ dsTrans=ds.GetGeoTransform()
 driver=ds.GetDriver()
 
 yfndvi=[]
+#yfndwi=[]
 yqflag=[]
         
 for k,v in itertools.groupby(fndvi,key=lambda x:x[4:10]):
     yfndvi.append(list(v))
-
+#for k,v in itertools.groupby(fndwi,key=lambda x:x[4:10]):
+#    yfndwi.append(list(v))
 for k,v in itertools.groupby(fqflag,key=lambda x:x[4:10]):
     yqflag.append(list(v))
 
@@ -109,9 +132,13 @@ out_npy = os.path.split(ws)[0] + "\\" + "Blocks" # Output extract band
 if not os.path.exists(out_npy):
 	os.makedirs(out_npy)
 
-out_interp = directory
+out_interp = os.path.split(ws)[0] + "\\" + "Interpolated" # Output extract band
 if not os.path.exists(out_interp):
 	os.makedirs(out_interp)
+
+#out_anom = os.path.split(ws)[0] + "\\" + "Anomaly" # Output extract band
+#if not os.path.exists(out_anom):
+#	os.makedirs(out_anom)
 
 x_total,y_total=ds.RasterXSize,ds.RasterYSize #rastersizeXY
 n_chunks=6 #800x800, if 9 600x600 if 5 1200x1200
@@ -123,6 +150,7 @@ y_offsets=np.linspace(0,y_total,n_chunks).astype(int)
 y_offsets=zip(y_offsets[:-1],y_offsets[1:])
 
 index=0
+#test=[]
 while index < len(yfndvi):
     os.chdir(directory)
     step=0
